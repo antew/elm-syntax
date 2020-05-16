@@ -1,6 +1,8 @@
 module Elm.Processing.Documentation exposing (postProcess)
 
+import Dict exposing (Dict)
 import Elm.Inspector as Inspector exposing (Order(..), defaultConfig)
+import Elm.Syntax.Comments exposing (Comment)
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Documentation exposing (..)
 import Elm.Syntax.Expression exposing (..)
@@ -13,23 +15,23 @@ import Elm.Syntax.TypeAlias exposing (TypeAlias)
 
 postProcess : File -> File
 postProcess file =
+    let
+        ranges =
+            buildDict file
+    in
     Inspector.inspect
         { defaultConfig
-            | onFunction = Post onFunction
-            , onTypeAlias = Post onTypeAlias
-            , onType = Post onType
+            | onFunction = Post (onFunction ranges)
+            , onTypeAlias = Post (onTypeAlias ranges)
+            , onType = Post (onType ranges)
         }
         file
         file
 
 
-onType : Node Type -> File -> File
-onType (Node r customType) file =
-    let
-        docs =
-            List.filter (isDocumentationForRange r) file.comments
-    in
-    case List.head docs of
+onType : Dict Int (Node Comment) -> Node Type -> File -> File
+onType dict (Node r customType) file =
+    case Dict.get r.start.row dict of
         Just ((Node docRange docString) as doc) ->
             { file
                 | comments =
@@ -47,13 +49,9 @@ onType (Node r customType) file =
             file
 
 
-onTypeAlias : Node TypeAlias -> File -> File
-onTypeAlias (Node r typeAlias) file =
-    let
-        docs =
-            List.filter (isDocumentationForRange r) file.comments
-    in
-    case List.head docs of
+onTypeAlias : Dict Int (Node Comment) -> Node TypeAlias -> File -> File
+onTypeAlias dict (Node r typeAlias) file =
+    case Dict.get r.start.row dict of
         Just ((Node docRange docString) as doc) ->
             { file
                 | comments =
@@ -78,13 +76,9 @@ onTypeAlias (Node r typeAlias) file =
             file
 
 
-onFunction : Node Function -> File -> File
-onFunction (Node functionRange function) file =
-    let
-        docs =
-            List.filter (isDocumentationForRange functionRange) file.comments
-    in
-    case List.head docs of
+onFunction : Dict Int (Node Comment) -> Node Function -> File -> File
+onFunction dict (Node functionRange function) file =
+    case Dict.get functionRange.start.row dict of
         Just ((Node docRange docString) as doc) ->
             { file
                 | comments =
@@ -113,14 +107,15 @@ replaceDeclaration (Node r1 new) (Node r2 old) =
         )
 
 
-isDocumentationForRange : Range -> Node String -> Bool
-isDocumentationForRange range (Node commentRange commentText) =
-    if String.startsWith "{-|" commentText then
-        let
-            functionStartRow =
-                range.start.row
-        in
-        (commentRange.end.row + 1) == functionStartRow
+buildDict : File -> Dict Int (Node Comment)
+buildDict file =
+    file.comments
+        |> List.foldl
+            (\((Node range comment) as node) acc ->
+                if String.startsWith "{-|" comment then
+                    Dict.insert (range.end.row + 1) node acc
 
-    else
-        False
+                else
+                    acc
+            )
+            Dict.empty
